@@ -1,14 +1,21 @@
+# Archivo: core/sistema.py (o el módulo correspondiente a ArchiVirtualSystem)
+# Descripción: Este archivo contiene la clase ArchiVirtualSystem, que implementa la lógica principal del sistema de archivos virtual y su sincronización con el disco físico, manteniendo estructuras como historial, papelera, cola de impresión y recorridos de árbol/grafo.
+# os: módulo estándar para interactuar con el sistema operativo.
 import os
+# shutil: módulo estándar para operaciones de alto nivel sobre archivos y directorios, como mover o eliminar árboles completos.
 import shutil
+# Path: clase orientada a objetos de pathlib para manipular rutas de archivos y directorios de forma limpia y multiplataforma.
 from pathlib import Path
+# deque: estructura de datos de doble extremo de collections, ideal para implementar colas eficientes con operaciones en ambos extremos.
 from collections import deque
+# .modelos: importa las clases Archivo, Carpeta y HistorialNavegacion desde el módulo modelos del paquete actual.
 from .modelos import Archivo, Carpeta, HistorialNavegacion
 
+# La clase ArchiVirtualSystem coordina la estructura virtual de carpetas y archivos con su respaldo físico en disco, gestionando navegación, papelera, ordenamiento, búsqueda, cola de impresión, accesos directos y recorridos.
 class ArchiVirtualSystem:
-    """
-    Lógica del sistema. No contiene código Tkinter ni llamadas input()/print()
-    para que pueda utilizarse desde una consola, interfaz u otra aplicación.
-    """
+    # Logica del sistema. No contiene código Tkinter ni llamadas input()/print() para que pueda utilizarse desde una consola, interfaz u otra aplicación.
+
+    # Constructor de ArchiVirtualSystem: inicializa la ruta raíz física, crea la carpeta raíz si no existe, construye el árbol virtual cargando los elementos desde el disco y prepara las estructuras auxiliares (historial, papelera y cola de impresión).
     def __init__(self, ruta_fisica_master):
         self.ruta_master = Path(ruta_fisica_master).resolve()
         self.ruta_master.mkdir(parents=True, exist_ok=True)
@@ -21,6 +28,8 @@ class ArchiVirtualSystem:
         self.papelera = []                 # Pila: append() / pop()
         self.cola_impresion = deque()      # Cola: append() / popleft()
 
+    # Método auxiliar privado que recorre recursivamente un directorio físico en disco y puebla la carpeta virtual correspondiente con sus subcarpetas y archivos.
+    # Omite enlaces simbólicos para evitar ciclos o lecturas fuera de la estructura esperada, y maneja excepciones de permisos o codificación de forma segura.
     def _cargar_desde_disco(self, ruta, carpeta_virtual):
         try:
             elementos = sorted(ruta.iterdir(), key=lambda p: p.name.lower())
@@ -46,14 +55,17 @@ class ArchiVirtualSystem:
             except OSError:
                 continue
 
+    # Devuelve una representación en cadena de la carpeta actual partiendo desde "Master" como raíz.
     def obtener_ruta_actual_str(self):
         return "Master" if self.actual == self.raiz else "Master/" + self.actual.ruta.relative_to(self.ruta_master).as_posix()
 
+    # Calcula y devuelve la ruta relativa de una carpeta dada respecto a la carpeta física master (o "." si es la raíz).
     def obtener_ruta_relativa(self, carpeta):
         if carpeta == self.raiz:
             return Path(".")
         return carpeta.ruta.relative_to(self.ruta_master)
 
+    # Lista los elementos contenidos en la carpeta indicada (o en la carpeta actual por defecto), agrupándolos en tuplas según su tipo: subcarpetas, accesos directos y archivos.
     def listar_elementos(self, carpeta=None):
         carpeta = carpeta or self.actual
         resultado = []
@@ -65,6 +77,7 @@ class ArchiVirtualSystem:
             resultado.append(("Archivo", arch))
         return resultado
 
+    # Método estático que valida que un nombre de archivo, carpeta o acceso directo no esté vacío, no sea "." o ".." y no contenga caracteres prohibidos en rutas.
     @staticmethod
     def _validar_nombre(nombre):
         nombre = nombre.strip()
@@ -72,6 +85,7 @@ class ArchiVirtualSystem:
             raise ValueError("El nombre está vacío o contiene caracteres no permitidos.")
         return nombre
 
+    # Crea una nueva subcarpeta tanto en el disco físico como en la estructura virtual dentro de la carpeta actual, verificando primero que el nombre sea válido y no exista previamente.
     def crear_carpeta(self, nombre):
         nombre = self._validar_nombre(nombre)
         if nombre in self.actual.subcarpetas or nombre in self.actual.archivos:
@@ -82,6 +96,7 @@ class ArchiVirtualSystem:
         self.actual.subcarpetas[nombre] = nueva
         return nueva
 
+    # Crea un nuevo archivo con el contenido indicado en el disco físico y lo registra en la carpeta virtual actual, actualizando su tamaño en bytes.
     def crear_archivo(self, nombre, contenido=""):
         nombre = self._validar_nombre(nombre)
         if nombre in self.actual.archivos or nombre in self.actual.subcarpetas:
@@ -93,14 +108,17 @@ class ArchiVirtualSystem:
         self.actual.archivos[nombre] = arch
         return arch
 
+    # Lee y devuelve el contenido textual de un objeto Archivo desde su ruta física en disco utilizando codificación UTF-8.
     def leer_archivo(self, archivo):
         return archivo.ruta.read_text(encoding="utf-8")
 
+    # Escribe el nuevo contenido en el archivo físico en disco y actualiza los atributos contenido y tamanio del objeto Archivo en memoria.
     def guardar_archivo(self, archivo, contenido):
         archivo.ruta.write_text(contenido, encoding="utf-8")
         archivo.contenido = contenido
         archivo.tamanio = archivo.ruta.stat().st_size
 
+    # Cambia la carpeta actual según el nombre dado (".." para subir al padre, o el nombre de una subcarpeta o acceso directo) y registra la visita en el historial.
     def cambiar_directorio(self, nombre):
         if nombre == "..":
             destino = self.actual.padre
@@ -116,29 +134,34 @@ class ArchiVirtualSystem:
         self.historial.visitar(destino)
         return destino
 
+    # Mueve la carpeta actual hacia la carpeta destino indicada y, opcionalmente, registra el movimiento en el historial de navegación.
     def navegar_a(self, carpeta, registrar=True):
         self.actual = carpeta
         if registrar:
             self.historial.visitar(carpeta)
 
+    # Retrocede a la carpeta anterior en el historial de navegación si existe y actualiza self.actual.
     def navegar_atras(self):
         destino = self.historial.atras()
         if destino:
             self.actual = destino
         return destino
 
+    # Avanza a la carpeta siguiente en el historial de navegación si existe y actualiza self.actual.
     def navegar_adelante(self):
         destino = self.historial.adelante()
         if destino:
             self.actual = destino
         return destino
 
+    # Sube a la carpeta padre de la carpeta actual registrando la navegación en el historial, o devuelve None si ya se está en la raíz.
     def subir_directorio(self):
         if self.actual.padre:
             self.navegar_a(self.actual.padre)
             return self.actual
         return None
 
+    # Envía un archivo o carpeta de la carpeta actual a la carpeta física de papelera y registra el metadato del elemento eliminado en la pila self.papelera para permitir su posterior restauración.
     def eliminar_elemento(self, nombre, tipo):
         if tipo == "Archivo" and nombre in self.actual.archivos:
             elemento = self.actual.archivos[nombre]
@@ -169,6 +192,7 @@ class ArchiVirtualSystem:
         })
         return elemento
 
+    # Restaura el último elemento eliminado (cima de la pila self.papelera) de vuelta a su carpeta padre original, reinsertándolo en la estructura virtual y actualizando rutas si es una carpeta.
     def restaurar_papelera(self):
         if not self.papelera:
             raise IndexError("La papelera está vacía.")
@@ -191,6 +215,7 @@ class ArchiVirtualSystem:
             self._actualizar_rutas(elemento)
         return elemento
 
+    # Método auxiliar recursivo que actualiza la ruta física (atributo ruta) de todos los archivos y subcarpetas dentro de una carpeta tras moverla o restaurarla.
     def _actualizar_rutas(self, carpeta):
         for archivo in carpeta.archivos.values():
             archivo.ruta = carpeta.ruta / archivo.nombre
@@ -198,6 +223,7 @@ class ArchiVirtualSystem:
             sub.ruta = carpeta.ruta / sub.nombre
             self._actualizar_rutas(sub)
 
+    # Vacía por completo la papelera eliminando físicamente del disco cada archivo o carpeta almacenado en ella y desapilando todos los registros de self.papelera.
     def vaciar_papelera(self):
         while self.papelera:
             item = self.papelera.pop()
@@ -207,6 +233,7 @@ class ArchiVirtualSystem:
             elif ruta.exists():
                 ruta.unlink()
 
+    # Ordena los archivos de la carpeta actual mediante el algoritmo de ordenamiento burbuja según el criterio indicado ("nombre" o "tamanio") y reconstruye el diccionario de archivos con el nuevo orden.
     def ordenar_archivos_burbuja(self, criterio="nombre"):
         archivos = list(self.actual.archivos.values())
         if criterio not in ("nombre", "tamanio"):
@@ -222,6 +249,7 @@ class ArchiVirtualSystem:
         self.actual.archivos = {a.nombre: a for a in archivos}
         return archivos
 
+    # Busca un archivo por nombre en la carpeta actual utilizando búsqueda binaria sobre los nombres ordenados previamente con ordenar_archivos_burbuja("nombre").
     def buscar_archivo_binario(self, nombre):
         self.ordenar_archivos_burbuja("nombre")
         nombres = list(self.actual.archivos.keys())
@@ -237,6 +265,7 @@ class ArchiVirtualSystem:
                 derecha = medio - 1
         return None
 
+    # Agrega un archivo existente de la carpeta actual al final de la cola de impresión (FIFO) y devuelve la cantidad actual de trabajos en cola.
     def enviar_a_impresion(self, nombre):
         archivo = self.actual.archivos.get(nombre)
         if archivo is None:
@@ -244,11 +273,13 @@ class ArchiVirtualSystem:
         self.cola_impresion.append(archivo)
         return len(self.cola_impresion)
 
+    # Extrae y devuelve el primer archivo en espera de la cola de impresión (FIFO), o lanza IndexError si la cola está vacía.
     def procesar_impresion(self):
         if not self.cola_impresion:
             raise IndexError("La cola de impresión está vacía.")
         return self.cola_impresion.popleft()
 
+    # Crea un acceso directo (arista dirigida) en la carpeta actual hacia una subcarpeta destino, validando el alias, verificando que no exista duplicado y comprobando que no se forme un ciclo.
     def crear_acceso_directo(self, alias, nombre_destino):
         alias = self._validar_nombre(alias)
         destino = self.actual.subcarpetas.get(nombre_destino)
@@ -262,6 +293,7 @@ class ArchiVirtualSystem:
             raise ValueError("El acceso directo produciría un ciclo.")
         self.actual.accesos_directos[alias] = destino
 
+    # Recorre de forma iterativa (DFS con pila) desde el nodo inicio siguiendo subcarpetas y accesos directos para determinar si es posible llegar al nodo objetivo.
     def _alcanzable(self, inicio, objetivo):
         pendientes = [inicio]
         visitados = set()
@@ -276,6 +308,7 @@ class ArchiVirtualSystem:
             pendientes.extend(nodo.accesos_directos.values())
         return False
 
+    # Realiza un recorrido en preorden (recursivo) a partir de la carpeta raíz para generar una lista indentada con carpetas y archivos.
     def recorrido_preorden(self):
         resultado = []
         def visitar(nodo, nivel):
@@ -287,6 +320,7 @@ class ArchiVirtualSystem:
         visitar(self.raiz, 0)
         return resultado
 
+    # Realiza un recorrido por niveles (BFS con cola deque) a partir de la carpeta raíz para generar una lista indentada con carpetas y archivos.
     def recorrido_por_niveles(self):
         resultado, cola = [], deque([(self.raiz, 0)])
         while cola:
